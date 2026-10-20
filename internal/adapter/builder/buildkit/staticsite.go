@@ -321,6 +321,15 @@ func readStaticSiteBuild(contextDir string) (staticSite, bool) {
 // A line break separates commands as `;` does.
 var commandSeparator = regexp.MustCompile(`[ \t]*(?:&&|\|\||;|\r?\n)[ \t]*`)
 
+// lineContinuation is a backslash before a line break, which continues the
+// command rather than ending it.
+var lineContinuation = regexp.MustCompile(`\\\r?\n`)
+
+// splitCommands is the commands a script runs one after another.
+func splitCommands(script string) []string {
+	return commandSeparator.Split(lineContinuation.ReplaceAllString(script, " "), -1)
+}
+
 // runsScript matches a command that runs another script of the same
 // package.json.
 var runsScript = regexp.MustCompile(`^(?:npm\s+(?:run(?:-script)?\s+)?|yarn\s+(?:run\s+)?|pnpm\s+(?:run\s+)?|bun\s+run\s+)([A-Za-z0-9:_.-]+)$`)
@@ -335,7 +344,7 @@ var runsScript = regexp.MustCompile(`^(?:npm\s+(?:run(?:-script)?\s+)?|yarn\s+(?
 func servingCommand(scripts map[string]string) string {
 	command := strings.TrimSpace(scripts["start"])
 	for range 4 {
-		parts := commandSeparator.Split(command, -1)
+		parts := splitCommands(command)
 		command = withoutEnvironment(parts[len(parts)-1])
 		m := runsScript.FindStringSubmatch(command)
 		if m == nil {

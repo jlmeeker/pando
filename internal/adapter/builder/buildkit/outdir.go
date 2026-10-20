@@ -94,7 +94,7 @@ var outFlagPattern = regexp.MustCompile(
 var ssrBuildPattern = regexp.MustCompile(`(?:^|\s)--ssr(?:[\s=]|$)`)
 
 func readScriptOutDir(_ string, _ string, scripts map[string]string) (string, string) {
-	for _, command := range commandSeparator.Split(scripts["build"], -1) {
+	for _, command := range splitCommands(scripts["build"]) {
 		if ssrBuildPattern.MatchString(command) {
 			continue
 		}

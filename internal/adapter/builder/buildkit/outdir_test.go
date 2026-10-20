@@ -132,6 +132,13 @@ func TestAnSSRBuildsOutputFlagIsNotTheClientOutput(t *testing.T) {
 			},
 			want: "site",
 		},
+		"an ssr build continued onto the next line": {
+			files: map[string]string{
+				"web/package.json":   `{"scripts":{"build":"vite build && vite build --outDir dist-server \\\n  --ssr src/entry-server.tsx"}}`,
+				"web/vite.config.ts": `export default { build: { outDir: "../site" } };`,
+			},
+			want: "site",
+		},
 		"commands on separate lines": {
 			files: map[string]string{
 				"web/package.json": `{"scripts":{"build":"vite build --ssr --outDir dist-server\r\nvite build --outDir ../site"}}`,
