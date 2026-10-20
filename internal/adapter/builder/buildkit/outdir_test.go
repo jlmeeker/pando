@@ -132,6 +132,12 @@ func TestAnSSRBuildsOutputFlagIsNotTheClientOutput(t *testing.T) {
 			},
 			want: "site",
 		},
+		"commands on separate lines": {
+			files: map[string]string{
+				"web/package.json": `{"scripts":{"build":"vite build --ssr --outDir dist-server\r\nvite build --outDir ../site"}}`,
+			},
+			want: "site",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			projects := clientProjects(withFiles(t, tc.files))

@@ -318,7 +318,8 @@ func readStaticSiteBuild(contextDir string) (staticSite, bool) {
 }
 
 // commandSeparator splits a script into the commands it runs one after another.
-var commandSeparator = regexp.MustCompile(`\s*(?:&&|\|\||;)\s*`)
+// A line break separates commands as `;` does.
+var commandSeparator = regexp.MustCompile(`[ \t]*(?:&&|\|\||;|\r?\n)[ \t]*`)
 
 // runsScript matches a command that runs another script of the same
 // package.json.
