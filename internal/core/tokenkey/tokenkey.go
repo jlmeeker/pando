@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	"github.com/trypando/pando/internal/errs"
+	"github.com/trypando/pando/internal/keyfile"
 )
 
 // Size is the key length in bytes.
@@ -32,7 +33,7 @@ const DefaultPath = "/var/lib/pando/token.key"
 
 // LoadOrCreate reads the key at path, generating it on first use.
 //
-// Written 0600 beside the path and linked into place, which fails if a key is
+// Written by keyfile.Create, which flushes it to disk and fails if a key is
 // already there. Several replicas sharing one volume start at once, and two
 // that each wrote their own key would each issue tokens the other could not
 // verify; the one that loses the link reads the winner's instead (issue #72).
@@ -56,20 +57,7 @@ func LoadOrCreate(path string) ([]byte, error) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Pando could not create %s for the API token key.", dir), err)
 		}
-		tmp, err := os.CreateTemp(dir, ".token-key-*")
-		if err != nil {
-			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Pando could not write the API token key to %s.", path), err)
-		}
-		defer func() { _ = os.Remove(tmp.Name()) }()
-		_, werr := tmp.Write(key)
-		cerr := tmp.Close()
-		if werr != nil || cerr != nil {
-			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Pando could not write the API token key to %s.", path), errors.Join(werr, cerr))
-		}
-		if err := os.Chmod(tmp.Name(), 0o600); err != nil {
-			return nil, errs.Wrap(errs.Internal, fmt.Sprintf("Pando could not write the API token key to %s.", path), err)
-		}
-		if err := os.Link(tmp.Name(), path); err != nil {
+		if err := keyfile.Create(path, key); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				return LoadOrCreate(path)
 			}
