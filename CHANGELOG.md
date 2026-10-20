@@ -19,24 +19,31 @@ Unreleased above it. -->
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-20
+
 ### Security
 
 No new advisories.
 
 ### Added
 
-- **The CLI is released for Windows**, as `pando_<version>_windows_amd64.zip` and `_arm64.zip`
-  holding `pando.exe`. An MCP client on Windows, such as Claude Desktop, can now run `pando mcp`;
-  its configuration names the full path to `pando.exe`. `pando self-update` works there too.
+- **The CLI is released for Windows** (#283), as `pando_<version>_windows_amd64.zip` and
+  `_arm64.zip` holding `pando.exe`. An MCP client on Windows, such as Claude Desktop, can now run
+  `pando mcp`; its configuration names the full path to `pando.exe`. `pando self-update` works there
+  too.
 
 ### Fixed
 
 - The MCP tool `pando_get_logs` failed with `invalid character '>' looking for beginning of value`
   on an app whose logs started with anything but JSON, such as npm's `> app@1.0.0 start`. For an app
   logging one JSON object per line, it returned only the first line. It now returns the logs as
-  written.
+  written (#283).
 - An MCP tool whose call succeeds with nothing to return, such as `pando_favorite_app`, answers
-  `Done.` rather than an empty result.
+  `Done.` rather than an empty result (#283).
+- A Vite site whose build script also runs `vite build --ssr ... --outDir dist-server`, to
+  prerender through an SSR bundle, was planned to serve the SSR bundle's directory, and its build
+  failed. Pando now ignores the `--ssr` build's output directory when finding what to serve (#284,
+  R-110).
 
 ## [0.11.0] - 2026-10-20
 
@@ -1275,7 +1282,8 @@ review the proposal as usual.
 The first release. Its notes were generated from the commit log, which is what this file now exists
 to replace; see the release page for the artifact list.
 
-[Unreleased]: https://github.com/trypando/pando/compare/v0.11.0...main
+[Unreleased]: https://github.com/trypando/pando/compare/v0.12.0...main
+[0.12.0]: https://github.com/trypando/pando/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/trypando/pando/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/trypando/pando/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/trypando/pando/compare/v0.8.0...v0.9.0
