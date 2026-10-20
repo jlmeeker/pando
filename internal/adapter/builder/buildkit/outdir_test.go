@@ -112,6 +112,35 @@ func TestAFlagInTheBuildScriptBeatsTheConfig(t *testing.T) {
 	require.Equal(t, "from-the-flag", projects[0].OutDir)
 }
 
+// An --outDir on a `vite build --ssr` names the server-rendering bundle, not the
+// client output: the flag on the client build, or the config, is read instead.
+func TestAnSSRBuildsOutputFlagIsNotTheClientOutput(t *testing.T) {
+	for name, tc := range map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"the config is read": {
+			files: map[string]string{
+				"web/package.json":   `{"scripts":{"build":"vite build && vite build --ssr src/entry-server.tsx --outDir dist-server"}}`,
+				"web/vite.config.ts": `export default { build: { outDir: "../public" } };`,
+			},
+			want: "public",
+		},
+		"the client build's flag is read": {
+			files: map[string]string{
+				"web/package.json": `{"scripts":{"build":"vite build --ssr --outDir=dist-server; vite build --outDir ../site"}}`,
+			},
+			want: "site",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			projects := clientProjects(withFiles(t, tc.files))
+			require.Len(t, projects, 1)
+			require.Equal(t, tc.want, projects[0].OutDir)
+		})
+	}
+}
+
 // Each reader takes a literal, and declines a config that is a program.
 func TestAComputedOutputDirectoryIsDeclined(t *testing.T) {
 	for name, files := range map[string]map[string]string{

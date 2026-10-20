@@ -88,12 +88,21 @@ func readFileIn(root, dir string, names ...string) (string, []byte) {
 var outFlagPattern = regexp.MustCompile(
 	`(?i)--(?:out-?dir|dist-dir|output-path|out-file)(?:=|\s+)([^\s"';|&]+)`)
 
+// ssrBuildPattern matches `vite build --ssr`: a server-rendering bundle, which
+// a prerender step imports to write pages into the client's output. It is never
+// what gets served, and a prerender script may delete it once it has run.
+var ssrBuildPattern = regexp.MustCompile(`(?:^|\s)--ssr(?:[\s=]|$)`)
+
 func readScriptOutDir(_ string, _ string, scripts map[string]string) (string, string) {
-	m := outFlagPattern.FindStringSubmatch(scripts["build"])
-	if m == nil {
-		return "", ""
+	for _, command := range commandSeparator.Split(scripts["build"], -1) {
+		if ssrBuildPattern.MatchString(command) {
+			continue
+		}
+		if m := outFlagPattern.FindStringSubmatch(command); m != nil {
+			return "package.json", m[1]
+		}
 	}
-	return "package.json", m[1]
+	return "", ""
 }
 
 // --- Vite, Astro, Vue: a literal key in a config ----------------------------
