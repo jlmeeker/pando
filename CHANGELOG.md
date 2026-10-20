@@ -54,6 +54,11 @@ No new advisories.
 - A Slack adapter set up with an incoming webhook URL keeps posting to its one channel. A new one is
   connected as Pando's app instead.
 
+### Fixed
+
+- The secrets key and API token key are flushed to disk when Pando first creates them. A power loss
+  just after first start could leave either one empty, and Pando then failed at every start.
+
 ## [0.10.0] - 2026-10-19
 
 ### Security
