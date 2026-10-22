@@ -140,6 +140,30 @@ func TestR020_ABuildReadsNothingOutsideTheCheckout(t *testing.T) {
 	require.NoError(t, err, "a view that does not name its checkout is checked against itself")
 }
 
+// TestR020_ABuildContextBesideTheSubdirectoryIsTheOneNamed asserts R-020's
+// rule for ".." in a build context: relative to the subdirectory and inside
+// the repository, it names the sibling it says; past the repository, as text
+// or in a Dockerfile, it is refused.
+func TestR020_ABuildContextBesideTheSubdirectoryIsTheOneNamed(t *testing.T) {
+	checkout := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(checkout, "services", "web"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(checkout, "shared"), 0o755))
+	src := checkoutView{view{root: filepath.Join(checkout, "services")}, checkout}
+
+	dir, err := sourceDir(api.BuildRequest{Source: src, Context: "../shared", Strategy: spec.BuildBuildpack})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(checkout, "shared"), dir)
+
+	for name, req := range map[string]api.BuildRequest{
+		"a context past the repository":    {Source: src, Context: "../../..", Strategy: spec.BuildBuildpack},
+		"a Dockerfile past the repository": {Source: src, Context: "web", Strategy: spec.BuildDockerfile, Dockerfile: "../../../etc/passwd"},
+	} {
+		_, err := sourceDir(req)
+		require.Error(t, err, name)
+		require.Equal(t, errs.BuildFailed, errs.CodeOf(err), name)
+	}
+}
+
 // checkoutView is a view rooted below the checkout it belongs to.
 type checkoutView struct {
 	view

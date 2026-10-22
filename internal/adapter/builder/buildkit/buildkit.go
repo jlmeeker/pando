@@ -397,13 +397,17 @@ func sourceDir(req api.BuildRequest) (string, error) {
 			"This builder needs the source on disk and was given something else.")
 	}
 	contextDir := dir.Root()
+	checkout := checkoutOf(req.Source, contextDir)
 	if req.Context != "" {
-		contextDir = filepath.Join(contextDir, filepath.Clean("/"+req.Context))
+		// As written, relative to the subdirectory: "../shared" names a
+		// sibling of it, which validation allows when it is inside the
+		// repository. Where it lands is what is checked.
+		contextDir = filepath.Join(contextDir, filepath.FromSlash(req.Context))
 	}
-	// R-020: the context is checked where it lands, not as text. A link in
-	// the repository named as the subdirectory or the context would otherwise
-	// hand the build a directory on the host.
-	checkout := checkoutOf(req.Source, dir.Root())
+	// R-020: the context is checked where it lands, as text and through every
+	// symbolic link. A ".." or a link in the repository named as the
+	// subdirectory or the context would otherwise hand the build a directory
+	// on the host.
 	if err := confined(checkout, contextDir, "build context"); err != nil {
 		return "", err
 	}

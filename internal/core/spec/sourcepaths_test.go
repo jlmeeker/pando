@@ -53,3 +53,36 @@ func TestR020_ABuildMayNameASiblingInsideTheSource(t *testing.T) {
 	s.Workloads[0].Build = &spec.WorkloadBuild{Context: "api/..", Dockerfile: "docker/Dockerfile"}
 	require.NoError(t, spec.Validate(s))
 }
+
+// TestR020_ARevisionStoredBeforeValidationStillDeploys asserts R-020 for
+// revisions written before validation refused paths outside the repository:
+// read back, a subdirectory or context that is absolute or climbs above the
+// repository names the place a build was always given for it, and the
+// revision validates. A path inside the repository is left exactly as it is.
+func TestR020_ARevisionStoredBeforeValidationStillDeploys(t *testing.T) {
+	s := valid()
+	s.Source.Subdir = "../../app"
+	s.Build.Context = "/web"
+	s.Workloads[0].Build = &spec.WorkloadBuild{Context: "../../.."}
+	worker := s.Workloads[0]
+	worker.Name, worker.Primary = "worker", false
+	worker.Build = &spec.WorkloadBuild{Context: "../shared"}
+	s.Workloads = append(s.Workloads, worker)
+	require.Error(t, spec.Validate(s))
+
+	spec.ConfineStoredPaths(s)
+	require.Equal(t, "app", s.Source.Subdir)
+	require.Equal(t, "web", s.Build.Context)
+	require.Empty(t, s.Workloads[0].Build.Context)
+	require.Equal(t, "../shared", s.Workloads[1].Build.Context, "a sibling inside the repository is kept as written")
+	require.NoError(t, spec.Validate(s))
+
+	inside := valid()
+	inside.Source.Subdir = "services"
+	inside.Build.Context = "./web"
+	before := *inside
+	spec.ConfineStoredPaths(inside)
+	require.Equal(t, before.Source, inside.Source)
+	require.Equal(t, before.Build, inside.Build)
+	spec.ConfineStoredPaths(nil)
+}

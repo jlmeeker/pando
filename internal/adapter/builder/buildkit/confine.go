@@ -80,6 +80,9 @@ func statContext(dir, name string) bool {
 // symbolic link, outside the checkout (R-020). A path that does not exist yet
 // is left for the build to report as missing.
 func confined(checkout, p, what string) error {
+	if outside(filepath.Clean(checkout), filepath.Clean(p)) {
+		return outsideSource(what)
+	}
 	base, err := filepath.EvalSymlinks(checkout)
 	if err != nil {
 		return errs.Wrap(errs.BuildFailed, msgReadSource, err)
@@ -91,13 +94,23 @@ func confined(checkout, p, what string) error {
 	if err != nil {
 		return errs.Wrap(errs.BuildFailed, msgReadSource, err)
 	}
-	rel, err := filepath.Rel(base, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return errs.Newf(errs.BuildFailed,
-			"The %s for this build is outside the app's source, through a symbolic link in the repository.", what).
-			WithRemedy("Build from a directory inside the repository, and name a Dockerfile inside it, without a symbolic link that leads out of it.")
+	if outside(base, resolved) {
+		return outsideSource(what)
 	}
 	return nil
+}
+
+// outside reports whether p is not base or below it.
+func outside(base, p string) bool {
+	rel, err := filepath.Rel(base, p)
+	return err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// outsideSource is the error for a build input outside the app's source.
+func outsideSource(what string) error {
+	return errs.Newf(errs.BuildFailed,
+		"The %s for this build is outside the app's source.", what).
+		WithRemedy("Build from a directory inside the repository, and name a Dockerfile inside it, with no \"..\" or symbolic link that leads out of it.")
 }
 
 // removeContextFile removes name, relative to dir, if it is there. A link is

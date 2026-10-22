@@ -124,8 +124,7 @@ func validateSourcePaths(s *AppSpec, add func(*errs.Error)) {
 				WithRemedy(msgSourcePathRemedy))
 			return
 		}
-		joined := path.Clean(path.Join(append(base, filepath.ToSlash(value))...))
-		if joined == ".." || strings.HasPrefix(joined, "../") {
+		if escapesRepository(path.Join(base...), value) {
 			add(errs.Newf(errs.ValidInvalid,
 				"%s is %q, which reaches above the repository, and "+msgSourcePathWant, field, value).
 				WithRemedy(msgSourcePathRemedy))
