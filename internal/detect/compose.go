@@ -752,7 +752,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 
 			// The provisioned instance answers to the service's names too, so
 			// a start command waiting on `db:5432` still finds it.
-			Aliases: c.hostnames(service),
+			Aliases: usableAliases(c.hostnames(service)),
 			Scheme:  scheme,
 
 			// Filled, because the compose file already answered it: it runs a
@@ -814,6 +814,19 @@ func (c *composeImport) hostnames(service string) []string {
 		names = append(names, cn)
 	}
 	return names
+}
+
+// usableAliases are the names a workload may answer to on its network: a
+// name Pando keeps for its own containers, or one that is not a network name,
+// is left out (R-025).
+func usableAliases(names []string) []string {
+	var out []string
+	for _, n := range names {
+		if spec.AliasProblem(n) == "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func pointsAtAny(value string, hosts []string) bool {
@@ -892,7 +905,11 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 	// `appseed_app:5005`, a DATABASE_URL naming the database's container
 	// (issue #90). Only inside the app's own network, so nothing collides.
 	if s.ContainerName != "" {
-		if _, taken := c.file.Services[s.ContainerName]; !taken && s.ContainerName != name {
+		_, taken := c.file.Services[s.ContainerName]
+		// A name Pando keeps for its own containers, or one that is not a
+		// network name, is not answered to (R-025); the service keeps its
+		// own name.
+		if !taken && s.ContainerName != name && spec.AliasProblem(s.ContainerName) == "" {
 			w.Aliases = []string{s.ContainerName}
 		}
 		c.rewrote(name, "container_name: "+s.ContainerName,
@@ -1463,8 +1480,16 @@ func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 					"app's variables if it needs another.")
 			continue
 		}
+		// Where the kernel presents itself, storage would hide what the
+		// runtime put there; Pando does not mount over it (R-240). Left out
+		// with a note rather than refusing the whole file.
+		if problem := spec.MountPathProblem(m.containerPath); problem != "" {
+			c.rewrote(name, "volume "+m.raw,
+				"This mounts storage at "+m.containerPath+", which "+problem+". Pando does not mount storage there, so this mount was left out.")
+			continue
+		}
 		mounts = append(mounts, spec.Mount{
-			VolumeID: m.volumeName, Path: m.containerPath, ReadOnly: m.readOnly,
+			VolumeID: m.volumeName, Path: path.Clean(m.containerPath), ReadOnly: m.readOnly,
 		})
 
 		// A relative bind mount is the author saying "this directory matters",

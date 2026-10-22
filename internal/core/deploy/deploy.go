@@ -1000,18 +1000,9 @@ func bundlePlanFor(s *spec.AppSpec, image string, perWorkload map[string]string,
 			DependsOn:  append(append([]string(nil), w.DependsOn...), svcs.dependsOn(s, w)...),
 			Aliases:    w.Aliases,
 			Exposed:    w.Exposed,
-			Resources: api.ResourcePlan{
-				CPUMillis:   s.Resources.CPUMillis,
-				MemoryBytes: s.Resources.MemoryBytes,
-				DiskBytes:   s.Resources.DiskBytes,
-			},
+			Resources:  planner.WorkloadResources(s, w),
 		}
-		if w.Resources != nil {
-			wp.Resources = api.ResourcePlan{CPUMillis: w.Resources.CPUMillis, MemoryBytes: w.Resources.MemoryBytes, DiskBytes: s.Resources.DiskBytes}
-		}
-		for _, m := range w.Mounts {
-			wp.Mounts = append(wp.Mounts, api.MountPlan{VolumeID: m.VolumeID, Path: m.Path, ReadOnly: m.ReadOnly})
-		}
+		wp.Mounts = planner.MountPlans(w)
 		// Configuration carried in the spec (R-020): read once at detection,
 		// pinned to this revision, replayed on every start.
 		for _, f := range w.Files {
@@ -1037,12 +1028,10 @@ func bundlePlanFor(s *spec.AppSpec, image string, perWorkload map[string]string,
 	// same one a second workload declared in the spec already gets.
 	for _, w := range svcs.workloads {
 		w.LogBytes = s.Retention.LogBytes
-		if w.Resources == (api.ResourcePlan{}) {
-			w.Resources = api.ResourcePlan{
-				CPUMillis:   s.Resources.CPUMillis,
-				MemoryBytes: s.Resources.MemoryBytes,
-			}
-		}
+		// Within the app's, like any workload's (R-240): what the adapter
+		// left unset, or set above the app's, is the app's.
+		within := spec.LimitWithin(spec.ResourceLimits{CPUMillis: w.Resources.CPUMillis, MemoryBytes: w.Resources.MemoryBytes}, s.Resources)
+		w.Resources.CPUMillis, w.Resources.MemoryBytes = within.CPUMillis, within.MemoryBytes
 		if w.Resources.DiskBytes == 0 {
 			w.Resources.DiskBytes = s.Resources.DiskBytes
 		}
