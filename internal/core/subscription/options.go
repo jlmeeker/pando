@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/trypando/pando/internal/adapter/api"
@@ -24,6 +25,14 @@ const (
 	maxHeaderValue  = 4096
 	maxTemplate     = 16 << 10
 	maxRenderedBody = 256 << 10
+
+	// maxTemplateSteps is how many loop iterations and template calls one
+	// rendering may make, and maxTemplateTime how long it may run. A body
+	// built from an event's fields takes a few dozen steps; a template asking
+	// for more is a loop with no bound, which would hold a core for as long
+	// as it ran and could not be canceled.
+	maxTemplateSteps = 10_000
+	maxTemplateTime  = time.Second
 )
 
 var methods = map[string]bool{"POST": true, "PUT": true, "PATCH": true}
@@ -146,8 +155,167 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
+// tickFunc is the function a rendering's budget is counted through: parsed
+// templates have a call to it put at the top of every loop body and every
+// template, so neither can run without being counted.
+const tickFunc = "pandoStep"
+
+// parseTemplate reads a body template and refuses one whose running time has
+// no bound in the text itself: a range over a number, and a template that
+// calls itself, directly or through another. What remains is bounded by the
+// event it is given and by the step budget render enforces.
 func parseTemplate(text string) (*template.Template, error) {
-	return template.New("payload").Funcs(templateFuncs).Option("missingkey=zero").Parse(text)
+	funcs := template.FuncMap{tickFunc: func() (string, error) { return "", nil }}
+	for name, f := range templateFuncs {
+		funcs[name] = f
+	}
+	t, err := template.New("payload").Funcs(funcs).Option("missingkey=zero").Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	calls := map[string][]string{}
+	for _, tmpl := range t.Templates() {
+		if tmpl.Tree == nil || tmpl.Root == nil {
+			continue
+		}
+		if err := bound(tmpl.Root, tmpl.Name(), calls); err != nil {
+			return nil, err
+		}
+	}
+	if name := recursive(calls); name != "" {
+		return nil, fmt.Errorf("the template %q calls itself, which could run without end", name)
+	}
+	for _, tmpl := range t.Templates() {
+		if tmpl.Tree != nil && tmpl.Root != nil {
+			tmpl.Root.Nodes = append([]parse.Node{tick()}, tmpl.Root.Nodes...)
+		}
+	}
+	return t, nil
+}
+
+// bound walks a template's nodes, refusing a range over a number, recording
+// which templates it calls, and counting each loop body as a step.
+func bound(n parse.Node, in string, calls map[string][]string) error {
+	switch n := n.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return nil
+		}
+		for _, c := range n.Nodes {
+			if err := bound(c, in, calls); err != nil {
+				return err
+			}
+		}
+	case *parse.RangeNode:
+		if rangesOverNumber(n.Pipe) {
+			return fmt.Errorf("{{range %s}} ranges over a number; a template may range only over the event's values, such as {{range .Fields}}", n.Pipe)
+		}
+		if n.List != nil {
+			n.List.Nodes = append([]parse.Node{tick()}, n.List.Nodes...)
+		}
+		return boundBranch(n.List, n.ElseList, in, calls)
+	case *parse.IfNode:
+		return boundBranch(n.List, n.ElseList, in, calls)
+	case *parse.WithNode:
+		return boundBranch(n.List, n.ElseList, in, calls)
+	case *parse.TemplateNode:
+		calls[in] = append(calls[in], n.Name)
+	}
+	return nil
+}
+
+func boundBranch(list, elseList *parse.ListNode, in string, calls map[string][]string) error {
+	if err := bound(list, in, calls); err != nil {
+		return err
+	}
+	return bound(elseList, in, calls)
+}
+
+// rangesOverNumber reports whether a range's pipeline is, or ends in, a
+// number: a literal, or a function such as len whose result is one.
+func rangesOverNumber(pipe *parse.PipeNode) bool {
+	if pipe == nil || len(pipe.Cmds) == 0 {
+		return false
+	}
+	last := pipe.Cmds[len(pipe.Cmds)-1]
+	if len(last.Args) == 0 {
+		return false
+	}
+	switch a := last.Args[0].(type) {
+	case *parse.NumberNode:
+		return true
+	case *parse.IdentifierNode:
+		return a.Ident == "len"
+	case *parse.PipeNode:
+		return rangesOverNumber(a)
+	}
+	return false
+}
+
+// recursive names a template that reaches itself through calls, or "".
+func recursive(calls map[string][]string) string {
+	const (
+		unvisited = iota
+		visiting
+		done
+	)
+	state := map[string]int{}
+	var visit func(string) bool
+	visit = func(name string) bool {
+		switch state[name] {
+		case visiting:
+			return true
+		case done:
+			return false
+		}
+		state[name] = visiting
+		for _, next := range calls[name] {
+			if visit(next) {
+				return true
+			}
+		}
+		state[name] = done
+		return false
+	}
+	names := make([]string, 0, len(calls))
+	for name := range calls {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if state[name] == unvisited && visit(name) {
+			return name
+		}
+	}
+	return ""
+}
+
+// tick is a call to the step budget.
+func tick() parse.Node {
+	return &parse.ActionNode{NodeType: parse.NodeAction, Pipe: &parse.PipeNode{
+		NodeType: parse.NodePipe,
+		Cmds: []*parse.CommandNode{{
+			NodeType: parse.NodeCommand,
+			Args:     []parse.Node{parse.NewIdentifier(tickFunc)},
+		}},
+	}}
+}
+
+// budget is one rendering's allowance of steps and time.
+type budget struct {
+	steps    int
+	deadline time.Time
+}
+
+func (b *budget) step() (string, error) {
+	b.steps++
+	if b.steps > maxTemplateSteps {
+		return "", fmt.Errorf("the template took more than %d steps; loop only over the event's values", maxTemplateSteps)
+	}
+	if time.Now().After(b.deadline) {
+		return "", fmt.Errorf("the template took longer than %s to render", maxTemplateTime)
+	}
+	return "", nil
 }
 
 // checkTemplate parses a body template and renders it for a sample event, so
@@ -202,6 +370,8 @@ func render(t *template.Template, e state.Event, app *EnvelopeApp, link string) 
 	if data.Data == nil {
 		data.Data = map[string]any{}
 	}
+	b := &budget{deadline: time.Now().Add(maxTemplateTime)}
+	t = t.Funcs(template.FuncMap{tickFunc: b.step})
 	var buf bytes.Buffer
 	if err := t.Execute(&limitWriter{w: &buf, left: maxRenderedBody}, data); err != nil {
 		return nil, err

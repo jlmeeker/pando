@@ -216,6 +216,9 @@ an incident service — gets it without a relay in between.
   Empty sends the envelope. Rendered at send time, capped at 256 KB; the signature covers the rendered
   body. Checked at save time by rendering a sample `deploy.failed`, and with a JSON content type the
   result must be JSON, so a mistake is a 400 rather than a delivery log of failures.
+  A template's running time is bounded: a `range` over a number and a template that calls itself are
+  refused when saved, and one rendering may make at most 10,000 loop iterations and template calls and
+  run for at most a second [P], at save time and at delivery.
 
 `text/template` runs no code a template author supplies beyond these functions, and a template sees only
 the event a subscription's owner may already see.
