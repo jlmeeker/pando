@@ -20,6 +20,9 @@ import (
 // attempts, and one more set every time a replica restarted.
 type FailedAttempts struct{ db *DB }
 
+// countFailedMessage is the error when failed attempts could not be counted.
+const countFailedMessage = "Could not count failed attempts."
+
 func NewFailedAttempts(db *DB) *FailedAttempts { return &FailedAttempts{db: db} }
 
 // maxKeyUsername bounds what a client can put in a row it causes.
@@ -81,16 +84,16 @@ func (r Reservation) Refused() bool { return r.Over >= 0 }
 func (p *FailedAttempts) Reserve(ctx context.Context, limits ...AttemptLimit) (Reservation, error) {
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
-		return Reservation{}, errs.Wrap(errs.Internal, "Could not count failed attempts.", err)
+		return Reservation{}, errs.Wrap(errs.Internal, countFailedMessage, err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	res, err := reserveIn(ctx, tx, limits)
 	if err != nil {
-		return Reservation{}, errs.Wrap(errs.Internal, "Could not count failed attempts.", err)
+		return Reservation{}, errs.Wrap(errs.Internal, countFailedMessage, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Reservation{}, errs.Wrap(errs.Internal, "Could not count failed attempts.", err)
+		return Reservation{}, errs.Wrap(errs.Internal, countFailedMessage, err)
 	}
 	return res, nil
 }

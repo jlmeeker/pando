@@ -131,8 +131,8 @@ func (s *Server) reserveAttempt(w http.ResponseWriter, r *http.Request, refused 
 // settle ends a reserved attempt by how its check came out. A wrong guess
 // (AUTH_INVALID) keeps the failures it was counted as. Anything else — a right
 // guess, or a check that could not be made — takes them back, and a right one
-// also forgets the failures under each key in clear.
-func (s *Server) settle(r *http.Request, res state.Reservation, err error, clear ...string) {
+// also forgets the failures under each key in forget.
+func (s *Server) settle(r *http.Request, res state.Reservation, err error, forget ...string) {
 	if err != nil && errs.CodeOf(err) == errs.AuthInvalid {
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) settle(r *http.Request, res state.Reservation, err error, clear
 	f := s.failedAttempts()
 	_ = f.Release(ctx, res)
 	if err == nil {
-		for _, key := range clear {
+		for _, key := range forget {
 			_ = f.Clear(ctx, key)
 		}
 	}
