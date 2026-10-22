@@ -758,6 +758,11 @@ func (a *Authorizer) checkPrincipal(ctx context.Context, p Principal) error {
 				"This installation requires two-factor authentication on local accounts, and this account has not set it up yet.").
 				WithRemedy("Sign in to the console and set up an authenticator app. It takes a minute.")
 		}
+		if p.PasswordChangePending {
+			return errs.New(errs.PermPasswordChangeRequired,
+				"This account signed in with a password somebody else set, and it must be changed before anything else.").
+				WithRemedy("Sign in to the console and choose a new password.")
+		}
 		return statusError(p.Status)
 
 	case KindToken:

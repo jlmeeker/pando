@@ -178,7 +178,8 @@ sessions and keeps their tokens, which they made and revoke themselves (R-058).
 **[D]** A session whose password was set by somebody else (`must_change_password`, R-046) is marked
 `PasswordChangePending`, and the API answers it only on `passwordChangeRoutes` — who it is, signing in
 and out, and `POST /me/password` — and `PERM_PASSWORD_CHANGE_REQUIRED` everywhere else, so the
-password cannot be turned into a token first.
+password cannot be turned into a token first. Step 2 refuses it too, as a backstop for a route that
+forgot the gate, and the proxy takes it for anonymous, so it reaches no app before the change.
 
 **[D]** Changing a group's membership is checked against the group's install role only. Its app grants
 are app verbs, and an account manager can reach those anyway by resetting an app owner's password;
