@@ -119,16 +119,14 @@ func (s *Server) onAppAddress(r *http.Request) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
+	if s.AppHosts != nil {
+		if isApp, err := s.AppHosts.IsAppHostname(r.Context(), host); err != nil || isApp {
+			return true
+		}
+	}
 	// A hostname that is neither Pando's nor an app's is treated as an
 	// app's here: it gets the sign-in page and nothing else (R-166).
-	if s.unknownHost(r.Context(), host) {
-		return true
-	}
-	if s.AppHosts == nil {
-		return false
-	}
-	isApp, err := s.AppHosts.IsAppHostname(r.Context(), host)
-	return err != nil || isApp
+	return s.unknownHost(r.Context(), host)
 }
 
 // sessionsPath is where a password sign-in is posted, and a session ended.

@@ -390,6 +390,11 @@ func TestR166_TheConsoleAndAPIAnswerOnlyOnPandosOwnAddress(t *testing.T) {
 		rec := get("Old-Notes.Example.com:443", path)
 		require.NotEqual(t, http.StatusNotFound, rec.Code, path)
 	}
+	// Under /.pando it is treated as an app's hostname: signing in, nothing
+	// else.
+	rec := get("old-notes.example.com", "/.pando/api/v1/apps")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Contains(t, rec.Body.String(), "answers only signing in here")
 
 	for _, host := range []string{"pando.example.com", "PANDO.example.com:443", "console.example.com",
 		"127.0.0.1:8080", "[::1]:8080", "localhost", "pando.localhost", "pando"} {
