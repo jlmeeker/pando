@@ -17,14 +17,19 @@ import (
 // read the app's Dockerfile" (issue #90). The compose file names the
 // repository root as its context; that is what the build is given, and each
 // context is rewritten to name the same place from there. Nothing reaches
-// above the repository: a path cannot climb past its root.
+// above the repository: a path cannot climb past its root, and a context that
+// tries — `..` from the repository's root, or an absolute path — is written as
+// the place inside the repository the build has always been given, rather than
+// left for validation to refuse (R-020).
 func liftBuildContexts(src spec.Source, draft Draft) (spec.Source, Draft) {
 	base := path.Clean("/" + src.Subdir)
 	root := base
+	outside := false
 	reach := func(context string) {
 		if context == "" {
 			return
 		}
+		outside = outside || leavesRepository(src.Subdir, context)
 		dir := path.Join(base, context)
 		for !within(dir, root) {
 			root = path.Dir(root)
@@ -36,7 +41,7 @@ func liftBuildContexts(src spec.Source, draft Draft) (spec.Source, Draft) {
 			reach(w.Build.Context)
 		}
 	}
-	if root == base {
+	if root == base && !outside {
 		return src, draft
 	}
 
@@ -70,4 +75,14 @@ func liftBuildContexts(src spec.Source, draft Draft) (spec.Source, Draft) {
 // within reports whether dir is root or below it. Both are clean and absolute.
 func within(dir, root string) bool {
 	return root == "/" || dir == root || strings.HasPrefix(dir, root+"/")
+}
+
+// leavesRepository reports whether a build context, relative to subdir, is
+// absolute or climbs above the repository.
+func leavesRepository(subdir, context string) bool {
+	if path.IsAbs(context) {
+		return true
+	}
+	rel := path.Join(strings.TrimPrefix(path.Clean("/"+subdir), "/"), context)
+	return rel == ".." || strings.HasPrefix(rel, "../")
 }

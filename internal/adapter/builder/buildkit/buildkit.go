@@ -400,7 +400,32 @@ func sourceDir(req api.BuildRequest) (string, error) {
 	if req.Context != "" {
 		contextDir = filepath.Join(contextDir, filepath.Clean("/"+req.Context))
 	}
+	// R-020: the context is checked where it lands, not as text. A link in
+	// the repository named as the subdirectory or the context would otherwise
+	// hand the build a directory on the host.
+	checkout := checkoutOf(req.Source, dir.Root())
+	if err := confined(checkout, contextDir, "build context"); err != nil {
+		return "", err
+	}
+	if req.Strategy == spec.BuildDockerfile {
+		name := req.Dockerfile
+		if name == "" {
+			name = "Dockerfile"
+		}
+		if err := confined(checkout, filepath.Join(contextDir, name), "Dockerfile"); err != nil {
+			return "", err
+		}
+	}
 	return contextDir, nil
+}
+
+// checkoutOf is the checkout a source view is part of, which may be above the
+// directory the view is rooted at; root when the view does not say.
+func checkoutOf(src any, root string) string {
+	if c, ok := src.(interface{ CheckoutRoot() string }); ok {
+		return c.CheckoutRoot()
+	}
+	return root
 }
 
 // prepareDockerfile returns the directory and name of the Dockerfile to build,
