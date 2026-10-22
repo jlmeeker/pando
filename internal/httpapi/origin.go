@@ -280,7 +280,7 @@ func (s *Server) notPandosAddress(w http.ResponseWriter, r *http.Request, host s
 	Error(w, r, errs.Newf(errs.NotFound,
 		"There is no app at %s, and Pando's console and API are not served there. Pando's own address is %s.",
 		host, s.ExternalURL.Host).
-		WithRemedy("Open " + s.ExternalURL.Scheme + "://" + s.ExternalURL.Host + " instead, or check the address."))
+		WithRemedy("Open "+s.ExternalURL.Scheme+"://"+s.ExternalURL.Host+" instead, or check the address."))
 }
 
 // pandosOnEveryHostname reports whether a request is Pando's whatever its
