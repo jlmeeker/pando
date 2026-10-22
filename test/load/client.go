@@ -182,8 +182,8 @@ func (c *Client) keepPassword(ctx context.Context, cookie string, signedIn []byt
 	var body struct {
 		MustChangePassword bool `json:"must_change_password"`
 	}
-	if err := json.Unmarshal(signedIn, &body); err != nil || !body.MustChangePassword {
-		return err
+	if json.Unmarshal(signedIn, &body) != nil || !body.MustChangePassword {
+		return nil
 	}
 	payload, _ := json.Marshal(map[string]string{"current_password": password, "new_password": password})
 	_, err := c.JSON(ctx, http.MethodPost, "/me/password", Credential{Cookie: cookie}, string(payload), nil)
