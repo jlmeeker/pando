@@ -46,13 +46,15 @@ const (
 
 // passcodeLimits are the two counts a passcode attempt is held to.
 func passcodeLimits(appID, addr string) (visitor, app limited) {
-	return limited{
-			state.AttemptLimit{Key: appID + "|" + addr, Max: passcodeAttempts, Window: passcodeWindow},
-			"Too many wrong passcodes for this app from your network address.",
-		}, limited{
-			state.AttemptLimit{Key: "passcode|app|" + appID, Max: passcodeAppAttempts, Window: passcodeWindow},
-			"Too many wrong passcodes for this app have been tried recently, from anywhere.",
-		}
+	visitor = limited{
+		state.AttemptLimit{Key: appID + "|" + addr, Max: passcodeAttempts, Window: passcodeWindow},
+		"Too many wrong passcodes for this app from your network address.",
+	}
+	app = limited{
+		state.AttemptLimit{Key: "passcode|app|" + appID, Max: passcodeAppAttempts, Window: passcodeWindow},
+		"Too many wrong passcodes for this app have been tried recently, from anywhere.",
+	}
+	return visitor, app
 }
 
 // handleGetPasscodeApp names an app for its passcode page. Answers only for an
