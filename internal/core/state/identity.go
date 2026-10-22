@@ -532,7 +532,7 @@ func (u *Users) UpdateProfile(ctx context.Context, userID string, p Profile) err
 		return err
 	}
 	if !found {
-		return errs.New(errs.NotFound, "There is no account with that ID.")
+		return errNoSuchAccount()
 	}
 	if user.AdapterID != LocalAdapterID && (p.Username != nil || p.Email != nil) {
 		return errs.New(errs.ValidInvalid,
@@ -735,7 +735,7 @@ func (u *Users) Delete(ctx context.Context, userID string) error {
 		return errs.Wrap(errs.Internal, "Could not delete the account.", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return errs.New(errs.NotFound, "There is no account with that ID.")
+		return errNoSuchAccount()
 	}
 	return nil
 }
