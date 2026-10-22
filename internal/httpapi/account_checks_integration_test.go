@@ -200,8 +200,11 @@ func TestR154_PinningARevisionOnADeployedAppIsADeploy(t *testing.T) {
 	require.Equal(t, ran.SpecID, app.PinnedSpecID, "the pin did not move")
 
 	// A deploy that would need approval is not taken around it by a pin.
-	// The harness configures no runtime to plan against; the plan is not
-	// what this asserts.
+	// A revision that does not plan is not pinned either. The harness
+	// configures no runtime, so nothing plans here; past this the plan is
+	// not what is asserted.
+	got = pin(admin, second)
+	require.Equal(t, "PLAN_ADAPTER_NOT_CONFIGURED", got.ErrorCode(), got.String())
 	a.Server.Planner = nil
 	a.policy(func(d *corepolicy.Document) { d.DeployApprovalRequired = true })
 	got = pin(admin, second)

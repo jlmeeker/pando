@@ -159,3 +159,54 @@ func TestR155_OnlyHeldAppVerbsAreHandedOn(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, held)
 }
+
+// failingStore is a store whose lookups fail on request, to show a failed
+// read refuses rather than confers.
+type failingStore struct {
+	*store
+	role, control, install bool
+}
+
+var errLookup = errs.New(errs.Internal, "lookup failed")
+
+func (f failingStore) Role(ctx context.Context, id string) (authz.Role, error) {
+	if f.role {
+		return authz.Role{}, errLookup
+	}
+	return f.store.Role(ctx, id)
+}
+
+func (f failingStore) ControlGrantsFor(ctx context.Context, appID string, p authz.Principal) ([]authz.Grant, error) {
+	if f.control {
+		return nil, errLookup
+	}
+	return f.store.ControlGrantsFor(ctx, appID, p)
+}
+
+func (f failingStore) InstallGrantsFor(ctx context.Context, p authz.Principal) ([]authz.Grant, error) {
+	if f.install {
+		return nil, errLookup
+	}
+	return f.store.InstallGrantsFor(ctx, p)
+}
+
+// TestR155_AFailedLookupConfersNothing asserts that CheckConfersOnApp refuses
+// when it cannot read the role or the caller's grants.
+func TestR155_AFailedLookupConfersNothing(t *testing.T) {
+	ctx := context.Background()
+	base := conferStore()
+	base.control["app_1"] = []authz.Grant{{ID: "gr_o", PrincipalKind: "user", PrincipalID: alice, RoleID: authz.RoleOwner}}
+	for name, f := range map[string]failingStore{
+		"role":    {store: base, role: true},
+		"control": {store: base, control: true},
+		"install": {store: base, install: true},
+	} {
+		a := authz.New(f, nil, &recorder{})
+		err := a.CheckConfersOnApp(ctx, activeUser(alice), "app_1", authz.RoleViewer, "x")
+		require.Equal(t, errs.Internal, errs.CodeOf(err), name)
+	}
+
+	// An Owner hands on what Owner holds.
+	a := authz.New(base, nil, &recorder{})
+	require.NoError(t, a.CheckConfersOnApp(ctx, activeUser(alice), "app_1", authz.RoleViewer, "x"))
+}
