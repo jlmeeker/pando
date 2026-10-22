@@ -259,6 +259,7 @@ func (s *Server) handleSourceInstalled(w http.ResponseWriter, r *http.Request) {
 // address: a GitHub App Pando created (R-142). Public, like an app's webhook:
 // the signature, against the connection's secret, is the credential.
 func (s *Server) handleSourceWebhook(w http.ResponseWriter, r *http.Request) {
+	allowBody(r, webhookBodyLimit, bodyTotalTimeout)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, webhookBodyLimit))
 	if err != nil {
 		Error(w, r, errs.New(errs.ValidInvalid, "This webhook's body is larger than Pando accepts."))

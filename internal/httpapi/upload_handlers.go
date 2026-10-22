@@ -46,6 +46,7 @@ func (s *Server) handleUploadSource(w http.ResponseWriter, r *http.Request) {
 
 	// The limit is enforced on the reader, not on Content-Length. A client that
 	// lies about the length would otherwise stream until the disk gave out.
+	allowBody(r, maxUploadBytes, 0)
 	body := http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	defer func() { _ = body.Close() }()
 

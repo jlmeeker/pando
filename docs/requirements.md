@@ -375,6 +375,8 @@ app, and the security reviewer's role; a custom role may hold any one `install.a
 
 Whatever the allowlist says, a repository is fetched over **https, http or ssh** only — git's `git@host:path` shorthand included — and never from a path on the machine Pando runs on (`file://`, a bare path) or over `git://`. **A repository may be on the private network or on the same machine**: an install's own Gitea is a normal place to deploy from. What a fetch may never connect to is checked on every address it dials, after DNS, so a name re-pointed between the check and the use gets nowhere: link-local addresses, which is where a cloud's metadata service answers (`169.254.169.254`), unspecified and multicast addresses, Pando's own listening port on any address of its machine, and its database. Through an HTTP(S) proxy the operator configured, which stays in use (R-087), the repository's host is resolved and checked before each request is handed to the proxy — best effort, since the proxy resolves it again for itself. A repository address carrying a username, password or token is refused where it is given: the spec is append-only and exported (R-152), so a credential in it could never be removed, and credentials belong in a source connection (R-190).
 
+**R-410 [D]** **Uploaded source is bounded when it is unpacked.** An archive sent as an app's source is refused, saying which limit it reached, when it holds more than 200,000 files and directories, when one file unpacks to more than 1 GB or all of them to more than 4 GB, or when it holds a sparse file. A file over a limit is refused, never written cut short. The defaults are far above a source tree without its dependencies, build output and `.git`.
+
 ### 7.2 Detection
 
 **R-093 [D]** Detection is a **detector auction**. Every builder adapter inspects the source and bids with a confidence score and a draft spec. Highest bid wins and produces a **proposal**, not a deployment.
@@ -1083,6 +1085,8 @@ R-106 describes and is not an error.
 **R-341 [D] [V1]** A person may mark apps they can open as **favorites**, and their launcher shows those first, above the rest. Favorites belong to the account, not the browser. They grant nothing, are visible only to the person who set them, and an app they can no longer open is not shown whether it is a favorite or not.
 
 **R-342 [D] [V1]** A person may make **sections** in their launcher — named, collapsible groupings — and file apps they can open into them, one section per app. Anything not filed is under "Your apps", so a person who never makes one sees the launcher as before. Like favorites, sections belong to the account, grant nothing and are visible only to the person who made them; deleting one returns its apps to "Your apps".
+
+**R-411 [D]** **A request body sent to the API is bounded in size and in time.** A body over 8 MB is refused, saying so, except on a route that takes more and holds it to its own limit: a source upload (R-410) and a git host's webhook. A body that goes a minute without a byte arriving, or takes more than five minutes in all, is refused; a source upload has only the first limit, so a large one on a slow link completes. Responses that stream (deploy events, logs, exec) are not cut by either.
 
 ---
 

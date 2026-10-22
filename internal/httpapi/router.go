@@ -506,6 +506,7 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(boundBodies)
 		r.Use(s.sameOriginWrites)
 		r.Use(Authenticate(s.Authent))
 		r.Use(s.twoFactorGate)

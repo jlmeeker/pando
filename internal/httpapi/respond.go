@@ -28,6 +28,11 @@ func JSON(w http.ResponseWriter, status int, body any) {
 func Error(w http.ResponseWriter, r *http.Request, err error) {
 	ctx := r.Context()
 
+	// A body refused for its size reads to most handlers as one they could
+	// not read; say what was wrong with it instead.
+	if tooLarge := bodyTooLarge(r); tooLarge != nil {
+		err = tooLarge
+	}
 	e := errs.As(err)
 	if e == nil {
 		log.From(ctx).Error("unenveloped error reached the API boundary", untrustedError(err))

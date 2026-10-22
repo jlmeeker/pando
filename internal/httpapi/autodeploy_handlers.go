@@ -89,6 +89,7 @@ func (s *Server) handleRemoveWebhookSecret(w http.ResponseWriter, r *http.Reques
 // git host has no Pando credential. The signature, against the app's own
 // secret, is the credential, and the service checks it before anything else.
 func (s *Server) handleAutoDeployWebhook(w http.ResponseWriter, r *http.Request) {
+	allowBody(r, webhookBodyLimit, bodyTotalTimeout)
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, webhookBodyLimit))
 	if err != nil {
 		Error(w, r, errs.New(errs.ValidInvalid, "This webhook's body is larger than Pando accepts."))
