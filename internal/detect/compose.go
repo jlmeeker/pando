@@ -1456,36 +1456,46 @@ func (c *composeImport) uncarryable(hostPath string) (string, bool) {
 		"Dockerfile.", false
 }
 
+// becomesVolume reports whether a compose mount becomes a volume of the
+// workload's own. What does not is carried another way or left out, with a
+// note where the author would want one.
+func (c *composeImport) becomesVolume(name string, m mount) bool {
+	if m.volumeName == "" {
+		return false
+	}
+	// A single file is carried in the spec instead (see files above).
+	// Making it a volume as well is two mechanisms for one path, and the
+	// one Docker refuses.
+	if m.hostPath != "" && c.isFile(m.hostPath) {
+		return false
+	}
+	// So is a directory of them, and one the image already has is left
+	// to the image (see files above).
+	if k := c.dirMount(name, m); k == dirInImage || k == dirCarried {
+		return false
+	}
+	if isHostClock(m) {
+		c.rewrote(name, "volume "+m.raw,
+			"This mounts the host's time zone into the app. Pando does not mount paths from the "+
+				"host machine, so the app keeps its image's time zone, usually UTC. Set TZ on the "+
+				"app's variables if it needs another.")
+		return false
+	}
+	// Where the kernel presents itself, storage would hide what the
+	// runtime put there; Pando does not mount over it (R-240). Left out
+	// with a note rather than refusing the whole file.
+	if problem := spec.MountPathProblem(m.containerPath); problem != "" {
+		c.rewrote(name, "volume "+m.raw,
+			"This mounts storage at "+m.containerPath+", which "+problem+". Pando does not mount storage there, so this mount was left out.")
+		return false
+	}
+	return true
+}
+
 func (c *composeImport) mounts(name string, s composeService) []spec.Mount {
 	var mounts []spec.Mount
 	for _, m := range serviceMounts(name, s.Volumes) {
-		if m.volumeName == "" {
-			continue
-		}
-		// A single file is carried in the spec instead (see files above).
-		// Making it a volume as well is two mechanisms for one path, and the
-		// one Docker refuses.
-		if m.hostPath != "" && c.isFile(m.hostPath) {
-			continue
-		}
-		// So is a directory of them, and one the image already has is left
-		// to the image (see files above).
-		if k := c.dirMount(name, m); k == dirInImage || k == dirCarried {
-			continue
-		}
-		if isHostClock(m) {
-			c.rewrote(name, "volume "+m.raw,
-				"This mounts the host's time zone into the app. Pando does not mount paths from the "+
-					"host machine, so the app keeps its image's time zone, usually UTC. Set TZ on the "+
-					"app's variables if it needs another.")
-			continue
-		}
-		// Where the kernel presents itself, storage would hide what the
-		// runtime put there; Pando does not mount over it (R-240). Left out
-		// with a note rather than refusing the whole file.
-		if problem := spec.MountPathProblem(m.containerPath); problem != "" {
-			c.rewrote(name, "volume "+m.raw,
-				"This mounts storage at "+m.containerPath+", which "+problem+". Pando does not mount storage there, so this mount was left out.")
+		if !c.becomesVolume(name, m) {
 			continue
 		}
 		mounts = append(mounts, spec.Mount{
