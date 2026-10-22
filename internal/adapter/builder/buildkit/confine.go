@@ -110,7 +110,7 @@ func outside(base, p string) bool {
 func outsideSource(what string) error {
 	return errs.Newf(errs.BuildFailed,
 		"The %s for this build is outside the app's source.", what).
-		WithRemedy("Build from a directory inside the repository, and name a Dockerfile inside it, with no \"..\" or symbolic link that leads out of it.")
+		WithRemedy("Build from a directory inside the repository, and name a Dockerfile inside it, by a path that stays inside the repository and through no symbolic link that leads out of it.")
 }
 
 // removeContextFile removes name, relative to dir, if it is there. A link is
