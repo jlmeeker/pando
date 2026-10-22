@@ -245,3 +245,36 @@ func TestACredentialStoreThatCannotBePutBackSaysTheConnectionNeedsRepair(t *test
 	require.Contains(t, err.Error(), "nor put back")
 	require.Contains(t, errs.As(err).Remedy, "Disconnect the connection")
 }
+
+// fakeNextBare is fakeNext answering with no credentials, or failing.
+type fakeNextBare struct {
+	fakeNext
+	fail bool
+}
+
+func (f fakeNextBare) CompleteAuthorization(ctx context.Context, req api.AuthorizationCompletion) (api.AuthorizationResult, error) {
+	if f.fail {
+		return api.AuthorizationResult{}, errs.New(errs.AdapterFailed, "the provider refused")
+	}
+	res, err := f.fakeNext.CompleteAuthorization(ctx, req)
+	res.Credentials = nil
+	return res, err
+}
+
+// TestR091_ANextStepWithoutAnythingToKeepIsRefused asserts that a provider
+// answering a web authorization with a next step but nothing to keep, or
+// refusing it, leaves no installation step open.
+func TestR091_ANextStepWithoutAnythingToKeepIsRefused(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		s := service(configs{row("src_fake", "fake", map[string]any{"host": "forge.example"})}, creds{}, new(int))
+		inner := s.New
+		s.New = func(kind string) api.SourceAdapter {
+			return fakeNextBare{fakeNext: fakeNext{fake: inner(kind).(*fake), next: "https://forge.example/apps/p/installations/new"}, fail: fail}
+		}
+		a, err := s.BeginAuthorization(ctx(), "src_fake", api.AuthorizationWeb, sourceconn.Addresses{Callback: "https://pando.example/cb"})
+		require.NoError(t, err)
+		_, next, err := s.CompleteWebAuthorization(ctx(), stateOf(a.AuthorizeURL), "code")
+		require.Equal(t, errs.AdapterFailed, errs.CodeOf(err), "fail=%v", fail)
+		require.Empty(t, next)
+	}
+}
