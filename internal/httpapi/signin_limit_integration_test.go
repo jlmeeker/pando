@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,6 +65,33 @@ func TestR404_WrongPasswordsAreLimitedPerUsername(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, other.Code, "another username has its own count")
 }
 
+// TestR404_ABurstOfWrongPasswordsIsHeldToTheLimit asserts that wrong
+// passwords sent all at once get no more checks than the limit allows: each
+// attempt is counted before its password is checked, so a burst cannot all
+// read the same count.
+func TestR404_ABurstOfWrongPasswordsIsHeldToTheLimit(t *testing.T) {
+	t.Parallel()
+	i, _ := signInLimited(t)
+	admin := bootstrap.AdminUsername
+
+	codes := make(chan int, 40)
+	var wg sync.WaitGroup
+	for range cap(codes) {
+		wg.Go(func() {
+			_, got := i.signIn(admin, "not-the-password")
+			codes <- got.Code
+		})
+	}
+	wg.Wait()
+	close(codes)
+	byCode := map[int]int{}
+	for c := range codes {
+		byCode[c]++
+	}
+	require.Equal(t, 10, byCode[http.StatusUnauthorized], "checked: %v", byCode)
+	require.Equal(t, 30, byCode[http.StatusTooManyRequests], "refused unchecked: %v", byCode)
+}
+
 // TestR404_WrongPasswordsAreLimitedPerAddress asserts R-404's second limit:
 // one address that has tried many wrong passwords — across any usernames — is
 // refused, even for an account it has not guessed at.
@@ -111,35 +139,34 @@ func TestR404_ARightPasswordClearsOnlyTheUsernamesCount(t *testing.T) {
 	require.Equal(t, 10, addr, "the address's count is kept")
 }
 
-// brokenAttempts is a failed-attempt store whose database is away.
-type brokenAttempts struct{ recentErr, recordErr error }
+// brokenAttempts is a failed-attempt store whose database is away: counting
+// fails with reserveErr, and nothing counted can be taken back or cleared.
+type brokenAttempts struct{ reserveErr error }
 
-func (b brokenAttempts) Recent(context.Context, string, time.Duration) (int, error) {
-	return 0, b.recentErr
+func (b brokenAttempts) Reserve(context.Context, ...state.AttemptLimit) (state.Reservation, error) {
+	return state.Reservation{Over: -1}, b.reserveErr
 }
-func (b brokenAttempts) Wait(context.Context, string, time.Duration) (time.Duration, error) {
-	return 0, b.recentErr
+func (brokenAttempts) Release(context.Context, state.Reservation) error {
+	return errors.New("database away")
 }
-func (b brokenAttempts) Record(context.Context, string, time.Duration) error { return b.recordErr }
-func (b brokenAttempts) Clear(context.Context, string) error                 { return errors.New("database away") }
+func (brokenAttempts) Clear(context.Context, string) error { return errors.New("database away") }
 
 // TestR404_AnUncountableSignInIsRefused asserts the sign-in limit fails
-// closed: an attempt whose count cannot be read, or a wrong password that
-// cannot be counted, is refused rather than let through uncounted.
+// closed: an attempt that cannot be counted is refused before the password is
+// checked, rather than let through uncounted.
 func TestR404_AnUncountableSignInIsRefused(t *testing.T) {
 	t.Parallel()
 	i := newInstall(t)
 
-	i.Server.FailedAttempts = brokenAttempts{recentErr: errors.New("database away")}
+	i.Server.FailedAttempts = brokenAttempts{reserveErr: errors.New("database away")}
 	_, got := i.signIn(bootstrap.AdminUsername, i.adminPassword)
-	require.Equal(t, http.StatusInternalServerError, got.Code, "an unreadable count is not a free attempt")
-
-	i.Server.FailedAttempts = brokenAttempts{recordErr: errors.New("database away")}
+	require.Equal(t, http.StatusInternalServerError, got.Code, "an uncountable attempt is not a free one")
 	_, got = i.signIn(bootstrap.AdminUsername, "not-the-password")
-	require.Equal(t, http.StatusInternalServerError, got.Code, "a wrong password that cannot be counted is refused")
+	require.Equal(t, http.StatusInternalServerError, got.Code, "nor is a wrong one")
 
-	// A right password signs in even if clearing the count fails: the count
-	// only ever errs toward stricter.
+	// A right password signs in even if taking back the count fails: the
+	// count only ever errs toward stricter.
+	i.Server.FailedAttempts = brokenAttempts{}
 	i.admin()
 }
 

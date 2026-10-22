@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -55,8 +54,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// password answered differently from a wrong one would let guessing carry
 	// on past the limit (R-404).
 	account, addr := signInLimits(req.Username, limitAddr(r))
-	failures := s.failedAttempts()
-	if s.signInLimited(w, r, req.Username, failures, account, addr) {
+	res, ok := s.reserveAttempt(w, r, func() { s.denySignIn(r, req.Username, "rate_limited") },
+		passwordLimits(account, addr)...)
+	if !ok {
 		return
 	}
 
@@ -64,15 +64,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Username: req.Username,
 		Password: secret.New(req.Password),
 	})
+	// Counted only when the answer was "wrong": a database that could not be
+	// read is not a guess. The right password forgets the username's
+	// failures. Not the address's: signing in to an account of your own would
+	// otherwise reset the count for guessing at everyone else's.
+	s.settle(r, res, err, account.Key)
 	if err != nil {
-		// Counted only when the answer was "wrong": a database that could not
-		// be read is not a guess.
-		if errs.CodeOf(err) == errs.AuthInvalid {
-			if err := recordFailures(r.Context(), failures, account, addr); err != nil {
-				Error(w, r, err)
-				return
-			}
-		}
 		// Audited as a denial: a pattern of failed logins is the signal that
 		// matters, and it is the thing most commonly left out.
 		s.denySignIn(r, req.Username, "")
@@ -89,11 +86,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.AuthInvalid, "That username and password do not match."))
 		return
 	}
-
-	// The right password forgets the username's failures. Not the address's:
-	// signing in to an account of your own would otherwise reset the count
-	// for guessing at everyone else's.
-	_ = failures.Clear(r.Context(), account.key)
 
 	if !s.secondFactor(w, r, user, req.Code, addr) {
 		return
@@ -115,9 +107,17 @@ const (
 // signInLimits are the two counts a password sign-in is held to (R-404). The
 // username is counted whether or not the account exists, so the limit is not
 // a way to learn which ones do.
-func signInLimits(username, addr string) (account, address attemptLimit) {
-	return attemptLimit{key: state.SignInUsernameKey(username), max: signInAccountAttempts, window: signInWindow},
-		attemptLimit{key: state.SignInAddrKey(addr), max: signInAddrAttempts, window: signInWindow}
+func signInLimits(username, addr string) (account, address state.AttemptLimit) {
+	return state.AttemptLimit{Key: state.SignInUsernameKey(username), Max: signInAccountAttempts, Window: signInWindow},
+		state.AttemptLimit{Key: state.SignInAddrKey(addr), Max: signInAddrAttempts, Window: signInWindow}
+}
+
+// passwordLimits are signInLimits with what a refusal over each says.
+func passwordLimits(account, addr state.AttemptLimit) []limited {
+	return []limited{
+		{account, "Too many wrong passwords for this username."},
+		{addr, "Too many wrong passwords from your network address."},
+	}
 }
 
 // denySignIn audits a refused sign-in, with why when it was not simply a
@@ -133,52 +133,6 @@ func (s *Server) denySignIn(r *http.Request, username, reason string) {
 		TargetKind:    "user",
 		Detail:        detail,
 	})
-}
-
-// signInLimited answers a sign-in over the username's or the address's limit
-// (R-404), audited, and reports whether it did. An unreadable count answers
-// too: it is an error, never a free attempt.
-func (s *Server) signInLimited(w http.ResponseWriter, r *http.Request, username string, failures FailedAttempts, account, addr attemptLimit) bool {
-	wait, what, err := overLimit(r.Context(), failures, account, addr)
-	if err != nil {
-		Error(w, r, err)
-		return true
-	}
-	if wait > 0 {
-		s.denySignIn(r, username, "rate_limited")
-		tooManyAttempts(w, r, wait, what)
-		return true
-	}
-	return false
-}
-
-// overLimit says how long until a password may be tried again against the
-// username's and the address's limits (R-404), and which one is holding it —
-// zero when neither is.
-func overLimit(ctx context.Context, failures FailedAttempts, account, addr attemptLimit) (time.Duration, string, error) {
-	for _, limit := range []struct {
-		attemptLimit
-		what string
-	}{
-		{account, "Too many wrong passwords for this username."},
-		{addr, "Too many wrong passwords from your network address."},
-	} {
-		wait, err := limit.exceeded(ctx, failures)
-		if err != nil || wait > 0 {
-			return wait, limit.what, err
-		}
-	}
-	return 0, "", nil
-}
-
-// recordFailures counts one wrong guess against each limit.
-func recordFailures(ctx context.Context, failures FailedAttempts, limits ...attemptLimit) error {
-	for _, limit := range limits {
-		if err := failures.Record(ctx, limit.key, limit.window); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // startSession signs a user in: a session, its cookie, and the audit event.
@@ -481,32 +435,20 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	account, addr := signInLimits(user.ExternalID, limitAddr(r))
-	failures := s.failedAttempts()
-	if wait, what, err := overLimit(r.Context(), failures, account, addr); err != nil || wait > 0 {
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		denied("rate_limited")
-		tooManyAttempts(w, r, wait, what)
+	res, ok := s.reserveAttempt(w, r, func() { denied("rate_limited") }, passwordLimits(account, addr)...)
+	if !ok {
 		return
 	}
-
-	if _, err := s.Identity.Authenticate(r.Context(), api.Credential{
+	_, err = s.Identity.Authenticate(r.Context(), api.Credential{
 		Username: user.ExternalID,
 		Password: secret.New(req.CurrentPassword),
-	}); err != nil {
-		if errs.CodeOf(err) == errs.AuthInvalid {
-			if err := recordFailures(r.Context(), failures, account, addr); err != nil {
-				Error(w, r, err)
-				return
-			}
-		}
+	})
+	s.settle(r, res, err, account.Key)
+	if err != nil {
 		denied("")
 		Error(w, r, errs.New(errs.AuthInvalid, "That current password is not right."))
 		return
 	}
-	_ = failures.Clear(r.Context(), account.key)
 
 	digest, err := hash.New(secret.New(req.NewPassword))
 	if err != nil {

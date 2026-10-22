@@ -73,15 +73,14 @@ func TestR075a_AnUncountablePasscodeAttemptIsRefused(t *testing.T) {
 	i := newInstall(t)
 	appID := passcodeApp(t, i, "open-sesame")
 
-	i.Server.FailedAttempts = brokenAttempts{recentErr: errors.New("database away")}
+	i.Server.FailedAttempts = brokenAttempts{reserveErr: errors.New("database away")}
 	got := i.do(nil, http.MethodPost, "/apps/"+appID+"/passcode", map[string]string{"passcode": "open-sesame"})
-	require.Equal(t, http.StatusInternalServerError, got.Code, "an unreadable count is not a free attempt")
-
-	i.Server.FailedAttempts = brokenAttempts{recordErr: errors.New("database away")}
+	require.Equal(t, http.StatusInternalServerError, got.Code, "an uncountable attempt is not a free one")
 	got = i.do(nil, http.MethodPost, "/apps/"+appID+"/passcode", map[string]string{"passcode": "guess"})
-	require.Equal(t, http.StatusInternalServerError, got.Code, "a wrong guess that cannot be counted is refused")
+	require.Equal(t, http.StatusInternalServerError, got.Code, "nor is a wrong one")
 
-	// A right passcode is let in even if clearing the count fails: the count
-	// only ever errs toward stricter.
+	// A right passcode is let in even if taking back the count fails: the
+	// count only ever errs toward stricter.
+	i.Server.FailedAttempts = brokenAttempts{}
 	unlock(t, i, appID, "open-sesame")
 }

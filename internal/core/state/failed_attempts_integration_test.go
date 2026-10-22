@@ -4,6 +4,8 @@ package state_test
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,4 +40,47 @@ func TestR404_TheWaitIsUntilTheOldestFailureLeavesTheWindow(t *testing.T) {
 	wait, err = failures.Wait(ctx, key, 15*time.Minute)
 	require.NoError(t, err)
 	require.InDelta(t, (5 * time.Minute).Seconds(), wait.Seconds(), 5, "measured from the oldest failure")
+}
+
+// TestR075a_ReservationsHoldABurstToTheLimit asserts that counting an attempt
+// before it is checked holds concurrent attempts to the limit (R-075a, R-404,
+// R-405): of a burst of fifty against a limit of five across two keys, exactly
+// five are let through to be checked, and a released one is not counted.
+func TestR075a_ReservationsHoldABurstToTheLimit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	failures := state.NewFailedAttempts(connected(t))
+	visitor := state.AttemptLimit{Key: "passcode|v|" + id.New(id.User), Max: 5, Window: time.Hour}
+	app := state.AttemptLimit{Key: "passcode|app|" + id.New(id.User), Max: 100, Window: time.Hour}
+
+	var through atomic.Int32
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Go(func() {
+			res, err := failures.Reserve(ctx, app, visitor)
+			if err == nil && !res.Refused() {
+				through.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	require.EqualValues(t, 5, through.Load())
+	n, err := failures.Recent(ctx, app.Key, time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, 5, n, "a refused attempt counts against no limit")
+
+	over, err := failures.Reserve(ctx, visitor)
+	require.NoError(t, err)
+	require.True(t, over.Refused())
+	require.Greater(t, over.Wait, 59*time.Minute)
+
+	require.NoError(t, failures.Clear(ctx, visitor.Key))
+	res, err := failures.Reserve(ctx, visitor, app)
+	require.NoError(t, err)
+	require.False(t, res.Refused())
+	require.Len(t, res.Held, 2)
+	require.NoError(t, failures.Release(ctx, res))
+	n, err = failures.Recent(ctx, app.Key, time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, 5, n, "released")
 }

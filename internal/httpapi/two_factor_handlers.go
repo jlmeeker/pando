@@ -39,14 +39,20 @@ func errUnreadableBody() error {
 }
 
 // codeLimit is the count wrong codes for an account are held to.
-func codeLimit(userID string) attemptLimit {
-	return attemptLimit{key: state.SignInCodeKey(userID), max: signInCodeAttempts, window: signInWindow}
+func codeLimit(userID string) limited {
+	return limited{
+		state.AttemptLimit{Key: state.SignInCodeKey(userID), Max: signInCodeAttempts, Window: signInWindow},
+		tooManyCodes,
+	}
 }
+
+// tooManyCodes is the refusal over a limit on two-factor codes.
+const tooManyCodes = "Too many wrong codes for this account."
 
 // secondFactor is the second step of a password sign-in (R-405), for an
 // account with two-factor authentication on. It reports whether sign-in may go
 // on; when not, it has answered.
-func (s *Server) secondFactor(w http.ResponseWriter, r *http.Request, user state.User, presented string, addr attemptLimit) bool {
+func (s *Server) secondFactor(w http.ResponseWriter, r *http.Request, user state.User, presented string, addr state.AttemptLimit) bool {
 	if !user.TwoFactorEnabled || s.TwoFactor == nil {
 		return true
 	}
@@ -60,35 +66,22 @@ func (s *Server) secondFactor(w http.ResponseWriter, r *http.Request, user state
 		return false
 	}
 
-	failures := s.failedAttempts()
 	account := codeLimit(user.ID)
-	wait, err := account.exceeded(r.Context(), failures)
-	if err == nil && wait == 0 {
-		wait, err = addr.exceeded(r.Context(), failures)
-	}
-	if err != nil {
-		Error(w, r, err)
-		return false
-	}
-	if wait > 0 {
-		s.denySignIn(r, user.ExternalID, "rate_limited")
-		tooManyAttempts(w, r, wait, "Too many wrong codes for this account.")
+	res, ok := s.reserveAttempt(w, r, func() { s.denySignIn(r, user.ExternalID, "rate_limited") },
+		account, limited{addr, tooManyCodes})
+	if !ok {
 		return false
 	}
 
 	method, err := s.TwoFactor.Verify(r.Context(), user.ID, presented)
+	s.settle(r, res, err, account.Key)
 	if err != nil {
 		if errs.CodeOf(err) == errs.AuthInvalid {
-			if err := recordFailures(r.Context(), failures, account, addr); err != nil {
-				Error(w, r, err)
-				return false
-			}
 			s.denySignIn(r, user.ExternalID, "wrong_code")
 		}
 		Error(w, r, err)
 		return false
 	}
-	_ = failures.Clear(r.Context(), account.key)
 
 	if method == twofactor.MethodRecoveryCode {
 		left := 0
@@ -255,31 +248,22 @@ func (s *Server) reauthenticated(w http.ResponseWriter, r *http.Request, p authz
 		return false
 	}
 	account, addr := signInLimits(user.ExternalID, limitAddr(r))
-	failures := s.failedAttempts()
-	if wait, what, err := overLimit(r.Context(), failures, account, addr); err != nil || wait > 0 {
-		if err != nil {
-			Error(w, r, err)
-			return false
-		}
+	res, ok := s.reserveAttempt(w, r, func() {
 		s.auditTwoFactor(r, p, "user.two_factor.denied", user.ID, map[string]any{"reason": "rate_limited"})
-		tooManyAttempts(w, r, wait, what)
+	}, passwordLimits(account, addr)...)
+	if !ok {
 		return false
 	}
-	if _, err := s.Identity.Authenticate(r.Context(), api.Credential{
+	_, err := s.Identity.Authenticate(r.Context(), api.Credential{
 		Username: user.ExternalID,
 		Password: secret.New(password),
-	}); err != nil {
-		if errs.CodeOf(err) == errs.AuthInvalid {
-			if err := recordFailures(r.Context(), failures, account, addr); err != nil {
-				Error(w, r, err)
-				return false
-			}
-		}
+	})
+	s.settle(r, res, err, account.Key)
+	if err != nil {
 		s.auditTwoFactor(r, p, "user.two_factor.denied", user.ID, nil)
 		Error(w, r, errs.New(errs.AuthInvalid, "That current password is not right."))
 		return false
 	}
-	_ = failures.Clear(r.Context(), account.key)
 	return true
 }
 
@@ -346,26 +330,18 @@ func (s *Server) handleConfirmTOTP(w http.ResponseWriter, r *http.Request) {
 
 	// Six digits again, so the same count as at sign-in: a borrowed session
 	// guessing here would gain nothing, but an unlimited guess is never free.
-	failures := s.failedAttempts()
 	limit := codeLimit(user.ID)
-	if wait, err := limit.exceeded(r.Context(), failures); err != nil || wait > 0 {
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		tooManyAttempts(w, r, wait, "Too many wrong codes for this account.")
+	res, ok := s.reserveAttempt(w, r, nil, limit)
+	if !ok {
 		return
 	}
 	replacing := user.TwoFactorEnabled
 	codes, err := s.TwoFactor.Confirm(r.Context(), user.ID, req.Code)
+	s.settle(r, res, err, limit.Key)
 	if err != nil {
-		if errs.CodeOf(err) == errs.AuthInvalid {
-			_ = recordFailures(r.Context(), failures, limit)
-		}
 		Error(w, r, err)
 		return
 	}
-	_ = failures.Clear(r.Context(), limit.key)
 	s.auditTwoFactor(r, p, "user.two_factor.enable", user.ID, map[string]any{
 		"method": "authenticator", "replaced": replacing,
 	})

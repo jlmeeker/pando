@@ -5,25 +5,30 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/trypando/pando/internal/clientaddr"
+	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 )
 
-// FailedAttempts counts wrong guesses at a passcode (R-075a) or a password
-// (R-404), by a key that says which and whose.
+// FailedAttempts counts wrong guesses at a passcode (R-075a), a password
+// (R-404) or a two-factor code (R-405), by a key that says which and whose.
 //
 // Shared by every replica in production (state.FailedAttempts): a count kept
 // in one process's memory gave an attacker one allowance per replica behind
 // the load balancer, and a fresh one whenever a replica restarted (issue #72).
+//
+// An attempt is counted as a failure before it is checked, atomically with
+// reading the count, and the failure is released when the guess was right.
+// Read first and recorded after, a burst of concurrent attempts all saw the
+// same count and every one was checked.
 type FailedAttempts interface {
-	Recent(ctx context.Context, key string, window time.Duration) (int, error)
-	// Wait is how long until the oldest failure within window leaves it.
-	Wait(ctx context.Context, key string, window time.Duration) (time.Duration, error)
-	Record(ctx context.Context, key string, window time.Duration) error
+	Reserve(ctx context.Context, limits ...state.AttemptLimit) (state.Reservation, error)
+	Release(ctx context.Context, res state.Reservation) error
 	Clear(ctx context.Context, key string) error
 }
 
@@ -49,26 +54,31 @@ func (l *memoryFailedAttempts) within(key string, window time.Duration) []time.T
 	return recent
 }
 
-func (l *memoryFailedAttempts) Recent(_ context.Context, key string, window time.Duration) (int, error) {
+func (l *memoryFailedAttempts) Reserve(_ context.Context, limits ...state.AttemptLimit) (state.Reservation, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.within(key, window)), nil
-}
-
-func (l *memoryFailedAttempts) Wait(_ context.Context, key string, window time.Duration) (time.Duration, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	recent := l.within(key, window)
-	if len(recent) == 0 {
-		return 0, nil
+	for i, limit := range limits {
+		if recent := l.within(limit.Key, limit.Window); len(recent) >= limit.Max {
+			return state.Reservation{Over: i, Wait: max(time.Until(recent[0].Add(limit.Window)), time.Second)}, nil
+		}
 	}
-	return max(time.Until(recent[0].Add(window)), 0), nil
+	res := state.Reservation{Over: -1}
+	for _, limit := range limits {
+		at := time.Now()
+		l.seen[limit.Key] = append(l.seen[limit.Key], at)
+		res.Held = append(res.Held, state.HeldAttempt{Key: limit.Key, At: at})
+	}
+	return res, nil
 }
 
-func (l *memoryFailedAttempts) Record(_ context.Context, key string, _ time.Duration) error {
+func (l *memoryFailedAttempts) Release(_ context.Context, res state.Reservation) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.seen[key] = append(l.seen[key], time.Now())
+	for _, h := range res.Held {
+		if i := slices.Index(l.seen[h.Key], h.At); i >= 0 {
+			l.seen[h.Key] = slices.Delete(l.seen[h.Key], i, i+1)
+		}
+	}
 	return nil
 }
 
@@ -87,28 +97,53 @@ func (s *Server) failedAttempts() FailedAttempts {
 	return s.attempts
 }
 
-// attemptLimit is how many failures a key may have within a window before
-// another attempt is refused without being checked.
-type attemptLimit struct {
-	key    string
-	max    int
-	window time.Duration
+// limited is a limit and what a refusal over it says.
+type limited struct {
+	state.AttemptLimit
+	what string
 }
 
-// exceeded reports how long until the limit lets another attempt through, or
-// zero when it already does. An unreadable count is an error, never a free
-// attempt: the limit fails closed.
-func (l attemptLimit) exceeded(ctx context.Context, f FailedAttempts) (time.Duration, error) {
-	n, err := f.Recent(ctx, l.key, l.window)
-	if err != nil || n < l.max {
-		return 0, err
+// reserveAttempt counts an attempt as a failure against every limit before it
+// is checked (R-075a, R-404, R-405). Over one, it answers with how long to
+// wait, calls refused first when given (to audit the refusal), and reports
+// false. An unreadable count is an error, never a free attempt: the limit
+// fails closed.
+func (s *Server) reserveAttempt(w http.ResponseWriter, r *http.Request, refused func(), limits ...limited) (state.Reservation, bool) {
+	plain := make([]state.AttemptLimit, len(limits))
+	for i, l := range limits {
+		plain[i] = l.AttemptLimit
 	}
-	wait, err := f.Wait(ctx, l.key, l.window)
+	res, err := s.failedAttempts().Reserve(r.Context(), plain...)
 	if err != nil {
-		return 0, err
+		Error(w, r, err)
+		return res, false
 	}
-	// Never zero once over the limit, so the caller can tell the two apart.
-	return max(wait, time.Second), nil
+	if res.Refused() {
+		if refused != nil {
+			refused()
+		}
+		tooManyAttempts(w, r, res.Wait, limits[res.Over].what)
+		return res, false
+	}
+	return res, true
+}
+
+// settle ends a reserved attempt by how its check came out. A wrong guess
+// (AUTH_INVALID) keeps the failures it was counted as. Anything else — a right
+// guess, or a check that could not be made — takes them back, and a right one
+// also forgets the failures under each key in clear.
+func (s *Server) settle(r *http.Request, res state.Reservation, err error, clear ...string) {
+	if err != nil && errs.CodeOf(err) == errs.AuthInvalid {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	f := s.failedAttempts()
+	_ = f.Release(ctx, res)
+	if err == nil {
+		for _, key := range clear {
+			_ = f.Clear(ctx, key)
+		}
+	}
 }
 
 // tooManyAttempts refuses an attempt over a limit, saying when to try again:

@@ -11,6 +11,7 @@ import (
 
 	"github.com/trypando/pando/internal/core/audit"
 	"github.com/trypando/pando/internal/core/authz"
+	"github.com/trypando/pando/internal/core/state"
 	"github.com/trypando/pando/internal/errs"
 	"github.com/trypando/pando/internal/hash"
 	"github.com/trypando/pando/internal/id"
@@ -44,9 +45,14 @@ const (
 )
 
 // passcodeLimits are the two counts a passcode attempt is held to.
-func passcodeLimits(appID, addr string) (visitor, app attemptLimit) {
-	return attemptLimit{key: appID + "|" + addr, max: passcodeAttempts, window: passcodeWindow},
-		attemptLimit{key: "passcode|app|" + appID, max: passcodeAppAttempts, window: passcodeWindow}
+func passcodeLimits(appID, addr string) (visitor, app limited) {
+	return limited{
+			state.AttemptLimit{Key: appID + "|" + addr, Max: passcodeAttempts, Window: passcodeWindow},
+			"Too many wrong passcodes for this app from your network address.",
+		}, limited{
+			state.AttemptLimit{Key: "passcode|app|" + appID, Max: passcodeAppAttempts, Window: passcodeWindow},
+			"Too many wrong passcodes for this app have been tried recently, from anywhere.",
+		}
 }
 
 // handleGetPasscodeApp names an app for its passcode page. Answers only for an
@@ -71,26 +77,6 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	visitor, everyone := passcodeLimits(app.ID, limitAddr(r))
-	failures := s.failedAttempts()
-	for _, limit := range []struct {
-		attemptLimit
-		what string
-	}{
-		{visitor, "Too many wrong passcodes for this app from your network address."},
-		{everyone, "Too many wrong passcodes for this app have been tried recently, from anywhere."},
-	} {
-		wait, err := limit.exceeded(r.Context(), failures)
-		if err != nil {
-			Error(w, r, err)
-			return
-		}
-		if wait > 0 {
-			tooManyAttempts(w, r, wait, limit.what)
-			return
-		}
-	}
-
 	var req struct {
 		Passcode string `json:"passcode"`
 	}
@@ -98,19 +84,22 @@ func (s *Server) handleEnterPasscode(w http.ResponseWriter, r *http.Request) {
 		Error(w, r, errs.New(errs.ValidInvalid, "The request body could not be read."))
 		return
 	}
+
+	visitor, everyone := passcodeLimits(app.ID, limitAddr(r))
+	res, ok := s.reserveAttempt(w, r, nil, visitor, everyone)
+	if !ok {
+		return
+	}
 	right, err := hash.Verify(secret.New(req.Passcode), grant.PasscodeHash)
 	if err != nil || !right {
-		if err := recordFailures(r.Context(), failures, visitor, everyone); err != nil {
-			Error(w, r, err)
-			return
-		}
+		// The failure counted before the check stands.
 		s.audit(r, audit.Event{
 			PrincipalKind: audit.KindAnonymous, Action: "app.passcode.denied", AppID: app.ID,
 		})
 		Error(w, r, errs.New(errs.AuthInvalid, "That passcode isn't right. Check it with whoever gave it to you."))
 		return
 	}
-	_ = failures.Clear(r.Context(), visitor.key)
+	s.settle(r, res, nil, visitor.Key)
 
 	token, expires, err := s.Grants.Unlock(r.Context(), app.ID, grant.ID)
 	if err != nil {
