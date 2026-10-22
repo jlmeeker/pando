@@ -119,8 +119,8 @@ func TestR411_ABodyThatStallsIsRefused(t *testing.T) {
 // keeps answering the same way when read again.
 func TestR411_ABodyRefusedForItsSizeStaysRefused(t *testing.T) {
 	b := &boundedBody{
-		body: io.NopCloser(strings.NewReader("0123456789")),
-		rc:   http.NewResponseController(httptest.NewRecorder()),
+		body:  io.NopCloser(strings.NewReader("0123456789")),
+		rc:    http.NewResponseController(httptest.NewRecorder()),
 		limit: 4,
 	}
 	buf := make([]byte, 16)
