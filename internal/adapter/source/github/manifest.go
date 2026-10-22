@@ -75,7 +75,9 @@ func (a *Adapter) beginApp(ctx context.Context, req api.AuthorizationRequest) (a
 	}
 	return api.Authorization{
 		Mode:         api.AuthorizationWeb,
-		AuthorizeURL: a.installURL(slug),
+		// GitHub hands state on to the setup address, which keeps the
+		// installation only for the browser it was given to.
+		AuthorizeURL: a.installURL(slug) + "?state=" + url.QueryEscape(req.State),
 		Flow:         secret.New(flowInstall),
 	}, nil
 }
