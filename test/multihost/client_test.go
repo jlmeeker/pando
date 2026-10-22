@@ -122,7 +122,8 @@ func keepPassword(c *http.Client, api, cookie string, signedIn []byte, password 
 	var body struct {
 		MustChangePassword bool `json:"must_change_password"`
 	}
-	if json.Unmarshal(signedIn, &body) != nil || !body.MustChangePassword {
+	_ = json.Unmarshal(signedIn, &body) // an answer that is not JSON asks nothing
+	if !body.MustChangePassword {
 		return nil
 	}
 	payload, err := json.Marshal(map[string]string{"current_password": password, "new_password": password})

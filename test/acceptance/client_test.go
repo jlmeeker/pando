@@ -125,7 +125,8 @@ func (c *client) keepPassword(signedIn *http.Response, password string) error {
 	var body struct {
 		MustChangePassword bool `json:"must_change_password"`
 	}
-	if json.NewDecoder(signedIn.Body).Decode(&body) != nil || !body.MustChangePassword {
+	_ = json.NewDecoder(signedIn.Body).Decode(&body) // an answer that is not JSON asks nothing
+	if !body.MustChangePassword {
 		return nil
 	}
 	payload, err := json.Marshal(map[string]string{"current_password": password, "new_password": password})
