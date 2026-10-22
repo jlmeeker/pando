@@ -748,7 +748,9 @@ func (r *Reconciler) correct(ctx context.Context, app state.Reconcilable, runtim
 	// tick: for ECR it is minted by a call to AWS.
 	if r.BuiltImageAuth != nil {
 		for i := range want.Workloads {
-			if want.Workloads[i].PullAuth == nil {
+			// Not for an image the spec names: the install's credential is
+			// for the app's own builds (R-025).
+			if want.Workloads[i].PullAuth == nil && !s.NamesImage(want.Workloads[i].Image) {
 				want.Workloads[i].PullAuth = r.BuiltImageAuth(ctx, want.Workloads[i].Image)
 			}
 		}
