@@ -752,7 +752,7 @@ func (c *composeImport) wire(backing map[string]spec.SlotType, workloads []spec.
 
 			// The provisioned instance answers to the service's names too, so
 			// a start command waiting on `db:5432` still finds it.
-			Aliases: usableAliases(c.hostnames(service)),
+			Aliases: c.usableAliases(service, c.hostnames(service)),
 			Scheme:  scheme,
 
 			// Filled, because the compose file already answered it: it runs a
@@ -816,13 +816,15 @@ func (c *composeImport) hostnames(service string) []string {
 	return names
 }
 
-// usableAliases are the names a workload may answer to on its network: a
-// name Pando keeps for its own containers, or one that is not a network name,
-// is left out (R-025).
-func usableAliases(names []string) []string {
+// usableAliases are the names a provisioned service may answer to on its
+// network: a name Pando keeps for its own containers, one that is not a
+// network name, or another service's name is left out (R-025). The service's
+// own name stays.
+func (c *composeImport) usableAliases(service string, names []string) []string {
 	var out []string
 	for _, n := range names {
-		if spec.AliasProblem(n) == "" {
+		_, other := c.file.Services[n]
+		if spec.AliasProblem(n) == "" && (n == service || !other) {
 			out = append(out, n)
 		}
 	}
@@ -909,13 +911,19 @@ func (c *composeImport) workload(name string, only bool) spec.Workload {
 		// A name Pando keeps for its own containers, or one that is not a
 		// network name, is not answered to (R-025); the service keeps its
 		// own name.
-		if !taken && s.ContainerName != name && spec.AliasProblem(s.ContainerName) == "" {
-			w.Aliases = []string{s.ContainerName}
+		if problem := spec.AliasProblem(s.ContainerName); problem != "" {
+			c.rewrote(name, "container_name: "+s.ContainerName,
+				"Pando names containers itself, and "+s.ContainerName+" "+problem+
+					", so the other services in this app reach it as "+name+" instead.")
+		} else {
+			if !taken && s.ContainerName != name {
+				w.Aliases = []string{s.ContainerName}
+			}
+			c.rewrote(name, "container_name: "+s.ContainerName,
+				"Pando names containers itself so that two apps importing compose files "+
+					"cannot collide over the same name. The other services in this app still reach it as "+
+					s.ContainerName+".")
 		}
-		c.rewrote(name, "container_name: "+s.ContainerName,
-			"Pando names containers itself so that two apps importing compose files "+
-				"cannot collide over the same name. The other services in this app still reach it as "+
-				s.ContainerName+".")
 	}
 
 	// Restart policy is configuration, not a question (R-104). Pando applies

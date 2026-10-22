@@ -105,3 +105,31 @@ func TestR096_AVersionOneComposeFileIsNotTheAnswer(t *testing.T) {
 	require.Nil(t, result.Blocked)
 	require.Equal(t, spec.BuildDockerfile, result.Winner.Strategy)
 }
+
+// TestR025_AnImportedServiceAnswersOnlyToNamesItMayUse asserts R-025 for a
+// compose import: a container_name Pando keeps for itself is not answered to,
+// and says so, and a provisioned service does not take another service's name.
+func TestR025_AnImportedServiceAnswersOnlyToNamesItMayUse(t *testing.T) {
+	const file = `
+services:
+  web:
+    image: example/app
+    container_name: pando-egress
+    environment:
+      DATABASE_URL: postgres://app:pw@db:5432/app
+  db:
+    image: postgres:16
+    container_name: web
+`
+	draft, err := detect.ImportCompose(memSource{"compose.yaml": file}, "compose.yaml")
+	require.NoError(t, err)
+	byName := workloadsByName(draft)
+	require.Empty(t, byName["web"].Aliases)
+	require.True(t, hasWarning(draft.Warnings, spec.WarnComposeConstructRewritten, "reach it as web instead"))
+	for _, s := range draft.Slots {
+		if s.Type == spec.SlotPostgres {
+			require.Equal(t, []string{"db"}, s.Aliases, "the provisioned database keeps its own name, not another service's")
+		}
+	}
+	require.True(t, hasSlot(draft.Slots, spec.SlotPostgres))
+}

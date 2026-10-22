@@ -142,7 +142,7 @@ func validateNames(s *AppSpec, add func(*errs.Error)) {
 }
 
 // NamesImage reports whether ref is an image the spec itself names — an image
-// app's image, or a workload's published one — rather than one an app's build
+// app's image, or the published one a workload without a build runs — rather than one an app's build
 // produced. Compared by repository, so a tag or digest the deploy pinned it to
 // is the same image. The install registry's credential is for an app's own
 // builds only: an author who writes down another app's build gets no
@@ -156,6 +156,11 @@ func (s *AppSpec) NamesImage(ref string) bool {
 		return true
 	}
 	for _, w := range s.Workloads {
+		// A workload with a build of its own runs what the build produced,
+		// which may be pushed to the repository its image names.
+		if w.Build != nil {
+			continue
+		}
 		if w.Image != "" && strings.EqualFold(imageRepository(w.Image), repo) {
 			return true
 		}

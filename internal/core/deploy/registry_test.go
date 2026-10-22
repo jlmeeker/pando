@@ -152,4 +152,9 @@ func TestR025_TheRegistryCredentialIsOnlyForTheAppsOwnBuilds(t *testing.T) {
 	require.True(t, s.NamesImage("registry.internal:5000/apps/app_01other"))
 	require.False(t, (*spec.AppSpec)(nil).NamesImage(own))
 	require.False(t, s.NamesImage(""))
+
+	// A workload with a build of its own runs what was built, even pushed to
+	// the repository its image names.
+	built := &spec.AppSpec{Workloads: []spec.Workload{{Name: "web", Image: "registry.internal:5000/apps/app_01hq8", Build: &spec.WorkloadBuild{}}}}
+	require.False(t, built.NamesImage(own))
 }
