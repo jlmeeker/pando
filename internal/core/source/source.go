@@ -303,7 +303,7 @@ func fetchGitOnce(ctx context.Context, src spec.Source, acc *gitAccess, mkdir fu
 		worktree, err := repo.Worktree()
 		if err != nil {
 			cleanup()
-			return nil, errs.Wrap(errs.Internal, "Could not read the fetched source.", err)
+			return nil, errs.Wrap(errs.Internal, msgReadFetched, err)
 		}
 		if err := worktree.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(src.Commit)}); err != nil {
 			cleanup()
@@ -316,14 +316,14 @@ func fetchGitOnce(ctx context.Context, src spec.Source, acc *gitAccess, mkdir fu
 	head, err := repo.Head()
 	if err != nil {
 		cleanup()
-		return nil, errs.Wrap(errs.Internal, "Could not read the fetched source.", err)
+		return nil, errs.Wrap(errs.Internal, msgReadFetched, err)
 	}
 
 	// R-020: nothing in the checkout may lead out of it. Upload skips links
 	// for the same reason (upload.go).
 	if err := confineLinks(dir); err != nil {
 		cleanup()
-		return nil, errs.Wrap(errs.Internal, "Could not read the fetched source.", err)
+		return nil, errs.Wrap(errs.Internal, msgReadFetched, err)
 	}
 
 	return &Checkout{Dir: dir, Commit: head.Hash().String(), cleanup: cleanup}, nil
@@ -349,6 +349,9 @@ func referenceFor(ref string) plumbing.ReferenceName {
 	}
 	return plumbing.NewBranchReferenceName(ref)
 }
+
+// msgReadFetched is the message for a fetched source Pando could not read.
+const msgReadFetched = "Could not read the fetched source."
 
 // msgNotInSource is the message for a name a view cannot open.
 const msgNotInSource = "That file is not in the app's source."

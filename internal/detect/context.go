@@ -23,24 +23,7 @@ import (
 // left for validation to refuse (R-020).
 func liftBuildContexts(src spec.Source, draft Draft) (spec.Source, Draft) {
 	base := path.Clean("/" + src.Subdir)
-	root := base
-	outside := false
-	reach := func(context string) {
-		if context == "" {
-			return
-		}
-		outside = outside || leavesRepository(src.Subdir, context)
-		dir := path.Join(base, context)
-		for !within(dir, root) {
-			root = path.Dir(root)
-		}
-	}
-	reach(draft.Build.Context)
-	for _, w := range draft.Workloads {
-		if w.Build != nil {
-			reach(w.Build.Context)
-		}
-	}
+	root, outside := reachOf(src.Subdir, draft)
 	if root == base && !outside {
 		return src, draft
 	}
@@ -85,4 +68,29 @@ func leavesRepository(subdir, context string) bool {
 	}
 	rel := path.Join(strings.TrimPrefix(path.Clean("/"+subdir), "/"), context)
 	return rel == ".." || strings.HasPrefix(rel, "../")
+}
+
+// reachOf is the directory, clean and absolute from the repository's root,
+// that every build context in draft lies within, and whether any of them
+// leaves the repository.
+func reachOf(subdir string, draft Draft) (root string, outside bool) {
+	base := path.Clean("/" + subdir)
+	root = base
+	contexts := []string{draft.Build.Context}
+	for _, w := range draft.Workloads {
+		if w.Build != nil {
+			contexts = append(contexts, w.Build.Context)
+		}
+	}
+	for _, context := range contexts {
+		if context == "" {
+			continue
+		}
+		outside = outside || leavesRepository(subdir, context)
+		dir := path.Join(base, context)
+		for !within(dir, root) {
+			root = path.Dir(root)
+		}
+	}
+	return root, outside
 }
