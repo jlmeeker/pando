@@ -473,7 +473,7 @@ func keepDockerfile() {
 func (a *Adapter) solve(ctx context.Context, req api.BuildRequest, contextDir, dockerfileDir, dockerfile, cacheDir string, timeout time.Duration) (api.BuildResult, error) {
 	contextFS, err := fsutil.NewFS(contextDir)
 	if err != nil {
-		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, "Could not read the app's source.", err)
+		return api.BuildResult{}, errs.Wrap(errs.BuildFailed, msgReadSource, err)
 	}
 	dockerfileFS, err := fsutil.NewFS(dockerfileDir)
 	if err != nil {

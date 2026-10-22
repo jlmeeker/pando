@@ -13,6 +13,12 @@ import (
 // msgPrepareBuild is the message for a build input Pando could not write.
 const msgPrepareBuild = "Could not prepare the build."
 
+// msgPreparePlan is the message for a build plan Pando could not set up.
+const msgPreparePlan = "Could not prepare the build plan."
+
+// msgReadSource is the message for an app's source Pando could not read.
+const msgReadSource = "Could not read the app's source."
+
 // Everything this builder writes into a checkout goes through an os.Root at
 // the build context, which refuses to follow a symbolic link out of it
 // (R-020). A name is checked as text before it gets here; the root is what
@@ -76,14 +82,14 @@ func statContext(dir, name string) bool {
 func confined(checkout, p, what string) error {
 	base, err := filepath.EvalSymlinks(checkout)
 	if err != nil {
-		return errs.Wrap(errs.BuildFailed, "Could not read the app's source.", err)
+		return errs.Wrap(errs.BuildFailed, msgReadSource, err)
 	}
 	resolved, err := filepath.EvalSymlinks(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return errs.Wrap(errs.BuildFailed, "Could not read the app's source.", err)
+		return errs.Wrap(errs.BuildFailed, msgReadSource, err)
 	}
 	rel, err := filepath.Rel(base, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {

@@ -120,14 +120,14 @@ func validateSourcePaths(s *AppSpec, add func(*errs.Error)) {
 		}
 		if path.IsAbs(filepath.ToSlash(value)) || filepath.IsAbs(value) {
 			add(errs.Newf(errs.ValidInvalid,
-				"%s is %q, an absolute path, and it has to be a path inside the app's source.", field, value).
+				"%s is %q, an absolute path, and "+msgSourcePathWant, field, value).
 				WithRemedy(msgSourcePathRemedy))
 			return
 		}
 		joined := path.Clean(path.Join(append(base, filepath.ToSlash(value))...))
 		if joined == ".." || strings.HasPrefix(joined, "../") {
 			add(errs.Newf(errs.ValidInvalid,
-				"%s is %q, which reaches above the repository, and it has to be a path inside the app's source.", field, value).
+				"%s is %q, which reaches above the repository, and "+msgSourcePathWant, field, value).
 				WithRemedy(msgSourcePathRemedy))
 		}
 	}
@@ -150,6 +150,9 @@ func validateSourcePaths(s *AppSpec, add func(*errs.Error)) {
 		check(prefix+"dockerfile", w.Build.Dockerfile, subdir, w.Build.Context)
 	}
 }
+
+// msgSourcePathWant ends a message about a path outside the app's source.
+const msgSourcePathWant = "it has to be a path inside the app's source."
 
 // msgSourcePathRemedy says what a path in the app's source looks like.
 const msgSourcePathRemedy = "Use a path relative to the repository, such as docker/Dockerfile, that does not start with a slash or climb above the repository with \"..\"."

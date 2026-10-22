@@ -66,10 +66,10 @@ func runRailpack(contextDir string, env []string) (string, error) {
 	// checkout and not a link the repository carried (R-020).
 	name := filepath.Join(planDir, railpackPlanFile)
 	if err := mkdirContext(contextDir, planDir); err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build plan.", err)
+		return "", errs.Wrap(errs.BuildFailed, msgPreparePlan, err)
 	}
 	if err := removeContextFile(contextDir, name); err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build plan.", err)
+		return "", errs.Wrap(errs.BuildFailed, msgPreparePlan, err)
 	}
 	planPath := filepath.Join(contextDir, name)
 
@@ -77,7 +77,7 @@ func runRailpack(contextDir string, env []string) (string, error) {
 	// its version lookups under /tmp/railpack, where the image put mise.
 	home, err := os.MkdirTemp("", "pando-railpack-*")
 	if err != nil {
-		return "", errs.Wrap(errs.BuildFailed, "Could not prepare the build plan.", err)
+		return "", errs.Wrap(errs.BuildFailed, msgPreparePlan, err)
 	}
 	defer func() { _ = os.RemoveAll(home) }()
 
